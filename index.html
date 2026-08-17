@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>น้องแคนเช็กชื่อ — AI Attendance System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+</head>
+<body>
+
+<div class="sidebar-scrim" id="sidebarScrim" onclick="toggleSidebar()"></div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar" role="navigation" aria-label="เมนูหลัก">
+    <div class="sidebar-brand">
+        <img src="can.png" alt="น้องแคน" class="brand-can-img" role="img">
+        <div class="brand-text">
+            <span class="brand-name">น้องแคนเช็กชื่อ</span>
+            <span class="brand-sub">AI ATTENDANCE SYSTEM</span>
+        </div>
+    </div>
+    <nav class="sidebar-nav">
+        <button class="nav-item active" onclick="showSection('dashboard')" data-section="dashboard" aria-label="แดชบอร์ด"><span class="nav-icon" aria-hidden="true">⌂</span><span>แดชบอร์ด</span></button>
+        <button class="nav-item" onclick="showSection('scan')" data-section="scan" aria-label="สแกนใบหน้า"><span class="nav-icon" aria-hidden="true">⬡</span><span>สแกนใบหน้า</span></button>
+        <button class="nav-item" onclick="showSection('register')" data-section="register" aria-label="ลงทะเบียนใบหน้า"><span class="nav-icon" aria-hidden="true">＋</span><span>ลงทะเบียนใบหน้า</span></button>
+        <button class="nav-item" onclick="showSection('database')" data-section="database" aria-label="นักศึกษา"><span class="nav-icon" aria-hidden="true">⊞</span><span>นักศึกษา</span></button>
+        <button class="nav-item" onclick="showSection('attendance')" data-section="attendance" aria-label="เข้าแถว"><span class="nav-icon" aria-hidden="true">≡</span><span>เข้าแถว</span></button>
+        <button class="nav-item" onclick="showSection('leave')" data-section="leave" aria-label="แจ้งลา"><span class="nav-icon" aria-hidden="true">📝</span><span>แจ้งลา</span></button>
+        <button class="nav-item" onclick="showSection('reports')" data-section="reports" aria-label="รายงาน"><span class="nav-icon" aria-hidden="true">📊</span><span>รายงาน</span></button>
+        <button class="nav-item" onclick="showSection('settings')" data-section="settings" aria-label="ตั้งค่า"><span class="nav-icon" aria-hidden="true">⚙</span><span>ตั้งค่า</span></button>
+    </nav>
+    <div class="sidebar-footer">
+        <button class="admin-btn" onclick="openModal('loginModal')" aria-label="ระบบอาจารย์"><span aria-hidden="true">🔒</span><span>ระบบอาจารย์</span></button>
+        <div class="ai-status"><span class="status-dot loading" id="aiDot" aria-hidden="true"></span><span id="aiStatusText">กำลังโหลด AI...</span></div>
+    </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main-content">
+    <header class="topbar">
+        <button class="hamburger" onclick="toggleSidebar()" aria-label="เปิดเมนู" aria-expanded="false"><span></span><span></span><span></span></button>
+        <div class="topbar-title" id="topbarTitle">แดชบอร์ด</div>
+        <div class="topbar-right">
+            <div class="clock" id="liveClock" aria-label="เวลาปัจจุบัน">00:00:00</div>
+            <div class="date-display" id="liveDate"></div>
+            <div class="topbar-user"><span class="topbar-user-avatar">อ</span><span>อาจารย์ประจำแผนก</span></div>
+        </div>
+    </header>
+
+    <!-- DASHBOARD -->
+    <section class="section-panel active" id="section-dashboard">
+        <div class="dash-hero">
+            <img src="can.png" alt="น้องแคน">
+            <div class="dash-hero-text">
+                <h2>สวัสดีครับ! น้องแคนดูแลการเช็กชื่อให้อยู่ 🐘</h2>
+                <p id="dashDateLine">—</p>
+            </div>
+        </div>
+
+        <div class="kpi-grid" id="kpiGrid">
+            <div class="kpi-card"><div class="kpi-icon total">👥</div><div><div class="kpi-num" id="kpiTotal">0</div><div class="kpi-label">นักศึกษาทั้งหมด</div></div></div>
+            <div class="kpi-card"><div class="kpi-icon present">✓</div><div><div class="kpi-num" id="kpiPresent" style="color:var(--green)">0</div><div class="kpi-label">เข้าแถว (ตรงเวลา)</div></div></div>
+            <div class="kpi-card"><div class="kpi-icon late">⏰</div><div><div class="kpi-num" id="kpiLate" style="color:var(--yellow)">0</div><div class="kpi-label">มาสาย</div></div></div>
+            <div class="kpi-card"><div class="kpi-icon absent">✕</div><div><div class="kpi-num" id="kpiAbsent" style="color:var(--red)">0</div><div class="kpi-label">ขาด</div></div></div>
+            <div class="kpi-card"><div class="kpi-icon leave">📝</div><div><div class="kpi-num" id="kpiLeave" style="color:var(--blue)">0</div><div class="kpi-label">ลา (วันนี้)</div></div></div>
+        </div>
+
+        <div class="dash-grid">
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <h3>แนวโน้มการเข้าแถว</h3>
+                    <div class="tab-row">
+                        <button class="tab-btn active" id="trendTab7" onclick="setTrendRange(7)">7 วัน</button>
+                        <button class="tab-btn" id="trendTab30" onclick="setTrendRange(30)">30 วัน</button>
+                    </div>
+                </div>
+                <div class="dash-card-body">
+                    <div class="trend-chart" id="trendChart"></div>
+                    <div class="legend-row">
+                        <span><span class="legend-dot" style="background:var(--green)"></span>ตรงเวลา</span>
+                        <span><span class="legend-dot" style="background:var(--yellow)"></span>มาสาย</span>
+                        <span><span class="legend-dot" style="background:var(--blue)"></span>ลา</span>
+                        <span><span class="legend-dot" style="background:var(--red)"></span>ขาด</span>
+                    </div>
+                </div>
+            </div>
+            <div class="dash-card">
+                <div class="dash-card-header"><h3>เข้าแถวล่าสุด</h3></div>
+                <div class="dash-card-body">
+                    <div class="recent-list" id="recentList"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="dash-grid">
+            <div class="dash-card">
+                <div class="dash-card-header"><h3>เปรียบเทียบตามชั้นปี</h3></div>
+                <div class="dash-card-body" id="classCompareBody"></div>
+            </div>
+            <div class="dash-card">
+                <div class="dash-card-header"><h3>นักศึกษาที่ควรดูแลเป็นพิเศษ</h3></div>
+                <div class="dash-card-body" id="attentionList"></div>
+            </div>
+        </div>
+
+        <div class="report-section-title">การดำเนินการด่วน</div>
+        <div class="quick-actions">
+            <div class="qa-btn" onclick="showSection('scan')"><div class="qa-icon">⬡</div><div class="qa-label">เริ่มสแกนใบหน้า</div></div>
+            <div class="qa-btn" onclick="showSection('register')"><div class="qa-icon">＋</div><div class="qa-label">เพิ่มนักศึกษา</div></div>
+            <div class="qa-btn" onclick="showSection('attendance')"><div class="qa-icon">≡</div><div class="qa-label">ดูรายชื่อเข้าแถว</div></div>
+            <div class="qa-btn" onclick="showSection('reports')"><div class="qa-icon">📊</div><div class="qa-label">ดูรายงาน</div></div>
+        </div>
+    </section>
+
+    <!-- SCAN -->
+    <section class="section-panel" id="section-scan">
+        <div id="aiErrorBanner" class="ai-error-banner" style="display:none;" role="alert">
+            <span>❌ ไม่สามารถโหลดระบบ AI ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและรีเฟรชหน้า</span>
+        </div>
+        <div class="scan-layout">
+            <div class="camera-card">
+                <div class="camera-header"><span class="cam-label">LIVE FEED</span><span class="rec-dot" id="recDot"></span></div>
+                <div class="video-wrapper">
+                    <video id="video" autoplay muted playsinline></video>
+                    <canvas id="canvas"></canvas>
+                    <div class="scan-overlay" id="scanOverlay">
+                        <div class="scan-frame">
+                            <div class="corner tl"></div><div class="corner tr"></div>
+                            <div class="corner bl"></div><div class="corner br"></div>
+                        </div>
+                        <p class="scan-hint">วางใบหน้าในกรอบ</p>
+                    </div>
+                </div>
+                <div class="camera-controls">
+                    <button class="btn-primary" onclick="startScanning()" id="startBtn" aria-label="เริ่มสแกน">▶ เริ่มสแกน</button>
+                    <button class="btn-danger" onclick="stopScanning()" id="stopBtn" disabled aria-label="หยุดสแกน">■ หยุด</button>
+                    <select class="cam-select" id="cameraSelect" onchange="switchCamera()" aria-label="เลือกกล้อง"><option>กล้องหลัก</option></select>
+                </div>
+            </div>
+            <div class="results-column">
+                <div class="status-card state-detecting" id="statusCard">
+                    <div class="status-icon" id="statusIcon">🤖</div>
+                    <div class="status-info">
+                        <div class="status-label">สถานะระบบ</div>
+                        <div class="status-value" id="statusText">กำลังโหลดโมเดล AI...</div>
+                    </div>
+                </div>
+                <div class="detect-card" id="detectCard" style="display:none;">
+                    <div class="detect-header">ตรวจพบบุคคล</div>
+                    <div class="detect-avatar">👤</div>
+                    <div class="detect-name" id="detectedName">—</div>
+                    <div class="detect-sub" id="detectedSub">—</div>
+                    <div class="detect-confidence" id="detectConfidence"></div>
+                    <button class="btn-checkin" id="checkinBtn" onclick="confirmCheckIn()">✓ ลงชื่อเข้าแถว</button>
+                    <div class="checkin-success" id="checkinSuccess" style="display:none;">✅ ลงชื่อสำเร็จแล้ว!</div>
+                </div>
+                <div class="detect-card" id="unknownCard" style="display:none;">
+                    <img src="can.png" class="mascot" style="width:52px;opacity:0.7;margin-bottom:8px;" alt="">
+                    <div class="unknown-face-title">ไม่พบข้อมูลนักเรียน</div>
+                    <div class="unknown-face-hint">กรุณามองกล้องให้ชัดเจน หรือลงทะเบียนใบหน้าก่อนใช้งาน</div>
+                </div>
+                <div class="stats-card">
+                    <div class="stats-title">สถิติวันนี้</div>
+                    <div class="stats-grid">
+                        <div class="stat-item"><div class="stat-num" id="statTotal">0</div><div class="stat-label">เข้าแถวแล้ว</div></div>
+                        <div class="stat-item"><div class="stat-num" id="statRegistered">0</div><div class="stat-label">ทั้งหมด</div></div>
+                        <div class="stat-item"><div class="stat-num" id="statPercent">0%</div><div class="stat-label">เปอร์เซ็นต์</div></div>
+                    </div>
+                </div>
+                <div class="chatbot-card">
+                    <div class="chatbot-toggle" onclick="toggleChatbot()">
+                        <img src="can.png" class="chatbot-can-img" alt="น้องแคน">
+                        <span>น้องแคน — ถามเรื่องชุด</span>
+                        <span class="toggle-arrow" id="chatArrow">▾</span>
+                    </div>
+                    <div class="chatbot-body" id="chatbotBody">
+                        <div class="chat-messages" id="chat-messages">
+                            <div class="bot-msg">สวัสดีครับ! 🐘 ถามเรื่องชุดแต่ละวัน หรือสถิติวันนี้ได้เลยครับ</div>
+                        </div>
+                        <div class="chat-input-row">
+                            <input type="text" id="chatInput" placeholder="เช่น วันจันทร์..." onkeypress="handleChat(event)">
+                            <button onclick="sendMessage()">ส่ง</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- REGISTER -->
+    <section class="section-panel" id="section-register">
+        <div class="register-layout">
+            <div class="register-card">
+                <div class="register-header">
+                    <div class="register-icon">📸</div>
+                    <h2>ลงทะเบียนนักศึกษา</h2>
+                    <p>กรอกข้อมูล แล้วถ่ายรูปให้ครบ 5 มุม</p>
+                </div>
+
+                <div class="stepper" id="regStepper">
+                    <div class="stepper-step active" id="step1"><div class="stepper-circle">1</div><div class="stepper-label">ข้อมูล</div></div>
+                    <div class="stepper-step" id="step2"><div class="stepper-circle">2</div><div class="stepper-label">เตรียมกล้อง</div></div>
+                    <div class="stepper-step" id="step3"><div class="stepper-circle">3</div><div class="stepper-label">ถ่ายภาพ</div></div>
+                    <div class="stepper-step" id="step4"><div class="stepper-circle">4</div><div class="stepper-label">ตรวจสอบ</div></div>
+                    <div class="stepper-step" id="step5"><div class="stepper-circle">5</div><div class="stepper-label">เสร็จสิ้น</div></div>
+                </div>
+
+                <div class="form-group">
+                    <label>ชื่อ-นามสกุล</label>
+                    <input type="text" id="name" placeholder="เช่น สมชาย ใจดี" class="form-input" oninput="updateStepper()">
+                </div>
+                <div class="form-group">
+                    <label>รหัสประจำตัว</label>
+                    <input type="text" id="studentId" placeholder="เช่น 6601-001" class="form-input" oninput="updateStepper()">
+                </div>
+                <div class="form-group">
+                    <label>ชั้นปี</label>
+                    <input type="text" id="year" placeholder="เช่น ปวช.1, ปี 2" class="form-input" oninput="updateStepper()">
+                </div>
+
+                <div class="capture-section">
+                    <div class="capture-slots-row" id="captureSlots">
+                        <div class="slot" id="slot0"><span>1</span><div class="slot-label">ตรง</div></div>
+                        <div class="slot" id="slot1"><span>2</span><div class="slot-label">ซ้าย</div></div>
+                        <div class="slot" id="slot2"><span>3</span><div class="slot-label">ขวา</div></div>
+                        <div class="slot" id="slot3"><span>4</span><div class="slot-label">ก้ม</div></div>
+                        <div class="slot" id="slot4"><span>5</span><div class="slot-label">เงย</div></div>
+                    </div>
+                    <div class="capture-instruction" id="captureInstruction">กด "ถ่ายรูป" เพื่อเก็บมุมที่ 1 (มองตรง)</div>
+                    <div class="capture-btn-row">
+                        <button class="btn-capture" id="captureBtn" onclick="captureOneFace()">📷 ถ่ายรูปมุมนี้</button>
+                        <button class="btn-danger-sm" onclick="resetCapture()">↺ เริ่มใหม่</button>
+                    </div>
+                </div>
+
+                <button class="btn-register" id="registerBtn" onclick="openConfirmRegister()" style="display:none;">✅ ยืนยันบันทึกข้อมูล</button>
+
+                <div class="reg-progress" id="regProgress" style="display:none;">
+                    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                    <p id="reg-status" style="text-align:center;font-size:0.85rem;margin-top:6px;"></p>
+                </div>
+            </div>
+
+            <!-- กล้องใหญ่ฝั่งขวา -->
+            <div class="mini-cam-card">
+                <div class="mini-cam-label">📷 ตัวอย่างสด — วางใบหน้าในกรอบ</div>
+                <div class="mini-video-wrapper">
+                    <video id="video2" autoplay muted playsinline></video>
+                    <canvas id="canvas2"></canvas>
+                    <div class="face-guide-overlay" id="faceGuide">
+                        <div class="face-guide-ellipse"></div>
+                        <div class="face-guide-arrows">
+                            <span class="guide-arrow" id="guideArrowText">↕ มองตรงๆ</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="angle-indicator">
+                    <span id="currentAngleText">📍 มุมที่ 1 / 5 — มองตรง</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- STUDENTS (database) -->
+    <section class="section-panel" id="section-database">
+        <div class="page-header">
+            <h2>ฐานข้อมูลนักศึกษา</h2>
+            <div class="header-actions students-toolbar">
+                <div class="search-box"><span>🔍</span><input type="text" id="searchDB" placeholder="ค้นหาชื่อหรือรหัส..." oninput="filterDB()"></div>
+                <select class="filter-select" id="classFilterDB" onchange="filterDB()"><option value="all">ทุกชั้นปี</option></select>
+                <select class="filter-select" id="statusFilterDB" onchange="filterDB()">
+                    <option value="all">ทุกสถานะวันนี้</option>
+                    <option value="present">เข้าแถวแล้ววันนี้</option>
+                    <option value="absent">ยังไม่เข้าแถว</option>
+                </select>
+                <button class="btn-primary" onclick="showSection('register')">＋ เพิ่มนักศึกษา</button>
+                <button class="btn-export" onclick="exportCSV('students')">📥 Export CSV</button>
+            </div>
+        </div>
+        <div class="table-card mobile-collapsible">
+            <table class="data-table" id="dbTable">
+                <thead><tr><th></th><th>รหัส</th><th>ชื่อ-นามสกุล</th><th>ชั้นปี</th><th>ใบหน้า</th><th>วันนี้</th><th>จัดการ</th></tr></thead>
+                <tbody id="dbBody"></tbody>
+            </table>
+            <div id="dbCardsMobile"></div>
+            <div class="empty-state" id="dbEmpty" style="display:none;">
+                <img src="can.png" class="mascot" alt="">
+                <p>ยังไม่มีข้อมูลนักศึกษา</p>
+                <button class="btn-primary" onclick="showSection('register')">+ ลงทะเบียนเลย</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ATTENDANCE -->
+    <section class="section-panel" id="section-attendance">
+        <div class="page-header">
+            <h2>รายชื่อเข้าแถว</h2>
+            <div class="header-actions">
+                <div class="search-box"><span>🔍</span><input type="text" id="searchAttendance" placeholder="ค้นหาชื่อหรือรหัส..." oninput="filterAttendance()"></div>
+                <input type="date" class="filter-select" id="attendanceDate" onchange="filterAttendance()">
+                <select class="filter-select" id="classFilterAttendance" onchange="filterAttendance()"><option value="all">ทุกชั้นปี</option></select>
+                <select class="filter-select" id="statusFilterAttendance" onchange="filterAttendance()">
+                    <option value="all">ทุกสถานะ</option>
+                    <option value="present">ตรงเวลา</option>
+                    <option value="late">มาสาย</option>
+                    <option value="leave">ลา</option>
+                    <option value="absent">ขาด</option>
+                </select>
+                <button class="btn-export" onclick="exportCSV('attendance')">📥 Export CSV</button>
+                <button class="btn-danger-sm" onclick="clearAttendance()">🗑️ ล้างวันนี้</button>
+            </div>
+        </div>
+        <div class="table-card">
+            <table class="data-table" id="attendanceTable">
+                <thead><tr><th>#</th><th>เวลา</th><th>รหัส</th><th>ชื่อ-นามสกุล</th><th>ชั้นปี</th><th>วิธีตรวจสอบ</th><th>สถานะ</th></tr></thead>
+                <tbody id="attendanceBody"></tbody>
+            </table>
+            <div class="empty-state" id="attendanceEmpty" style="display:none;">
+                <img src="can.png" class="mascot" alt="">
+                <p>ยังไม่มีรายชื่อ</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- LEAVE -->
+    <section class="section-panel" id="section-leave">
+        <div class="leave-layout">
+            <div class="leave-form-card">
+                <div class="register-header">
+                    <div class="register-icon">📝</div>
+                    <h2>แจ้งลาเข้าแถว</h2>
+                    <p>กรอกรหัสนักศึกษาเพื่อดึงข้อมูลอัตโนมัติ</p>
+                </div>
+                <div class="form-group">
+                    <label>รหัสประจำตัว</label>
+                    <input type="text" id="leaveStudentId" placeholder="กรอกรหัส..." class="form-input" oninput="autoFillLeaveInfo()">
+                </div>
+                <div class="form-group">
+                    <label>ชื่อ-นามสกุล</label>
+                    <input type="text" id="leaveName" placeholder="กรอกอัตโนมัติเมื่อพบรหัส" class="form-input" readonly style="opacity:0.7;">
+                </div>
+                <div class="form-group">
+                    <label>ชั้นปี</label>
+                    <input type="text" id="leaveYear" placeholder="—" class="form-input" readonly style="opacity:0.7;">
+                </div>
+                <div class="form-group">
+                    <label>วันที่ลา</label>
+                    <input type="date" id="leaveDate" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label>ประเภทการลา</label>
+                    <select id="leaveType" class="form-input">
+                        <option value="ลาป่วย">🤒 ลาป่วย</option>
+                        <option value="ลากิจ">📋 ลากิจ</option>
+                        <option value="ลาพักร้อน">🌴 ลาพักร้อน</option>
+                        <option value="อื่นๆ">📌 อื่นๆ</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>เหตุผล</label>
+                    <textarea id="leaveReason" placeholder="ระบุเหตุผลการลา..." class="form-input" rows="3"></textarea>
+                </div>
+                <button class="btn-register" onclick="submitLeave()">📨 ส่งใบลา</button>
+            </div>
+
+            <div class="leave-list-card">
+                <div class="page-header" style="margin-bottom:12px;">
+                    <h3 style="font-size:1rem;">ประวัติการลาทั้งหมด</h3>
+                    <div class="header-actions">
+                        <select class="filter-select" id="leaveFilter" onchange="renderLeaveTable()">
+                            <option value="all">ทุกประเภท</option>
+                            <option value="ลาป่วย">ลาป่วย</option>
+                            <option value="ลากิจ">ลากิจ</option>
+                            <option value="ลาพักร้อน">ลาพักร้อน</option>
+                            <option value="อื่นๆ">อื่นๆ</option>
+                        </select>
+                        <select class="filter-select" id="leaveStatusFilter" onchange="renderLeaveTable()">
+                            <option value="all">ทุกสถานะ</option>
+                            <option value="pending">รออนุมัติ</option>
+                            <option value="approved">อนุมัติแล้ว</option>
+                            <option value="rejected">ไม่อนุมัติ</option>
+                        </select>
+                        <button class="btn-export" onclick="exportCSV('leave')">📥 Export</button>
+                    </div>
+                </div>
+                <div class="table-card">
+                    <table class="data-table">
+                        <thead><tr><th>#</th><th>วันที่</th><th>รหัส</th><th>ชื่อ</th><th>ชั้นปี</th><th>ประเภท</th><th>เหตุผล</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
+                        <tbody id="leaveBody"></tbody>
+                    </table>
+                    <div class="empty-state" id="leaveEmpty" style="display:none;">
+                        <img src="can.png" class="mascot" alt="">
+                        <p>ยังไม่มีรายการลา</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- REPORTS -->
+    <section class="section-panel" id="section-reports">
+        <div class="page-header">
+            <h2>รายงาน</h2>
+        </div>
+        <div class="report-controls">
+            <select class="filter-select" id="reportPeriod" onchange="renderReports()">
+                <option value="daily">รายวัน (วันนี้)</option>
+                <option value="weekly">รายสัปดาห์ (7 วันล่าสุด)</option>
+                <option value="monthly">รายเดือน (30 วันล่าสุด)</option>
+            </select>
+            <select class="filter-select" id="reportClassFilter" onchange="renderReports()"><option value="all">ทุกชั้นปี</option></select>
+            <select class="filter-select" id="reportStudentFilter" onchange="renderReports()"><option value="all">นักศึกษาทั้งหมด</option></select>
+            <button class="btn-export" onclick="exportCSV('all')">📥 Export CSV</button>
+        </div>
+
+        <div class="report-summary-grid" id="reportSummaryGrid"></div>
+
+        <div class="dash-grid">
+            <div class="dash-card">
+                <div class="dash-card-header"><h3>แนวโน้มการเข้าแถว</h3></div>
+                <div class="dash-card-body"><div class="trend-chart" id="reportTrendChart"></div></div>
+            </div>
+            <div class="dash-card">
+                <div class="dash-card-header"><h3>เปรียบเทียบตามชั้นปี</h3></div>
+                <div class="dash-card-body" id="reportClassCompare"></div>
+            </div>
+        </div>
+
+        <div class="report-section-title">มาสายบ่อย</div>
+        <div class="table-card">
+            <table class="data-table"><thead><tr><th>รหัส</th><th>ชื่อ</th><th>ชั้นปี</th><th>จำนวนครั้งที่มาสาย</th></tr></thead><tbody id="reportLateBody"></tbody></table>
+        </div>
+        <div class="report-section-title">ขาดบ่อย</div>
+        <div class="table-card">
+            <table class="data-table"><thead><tr><th>รหัส</th><th>ชื่อ</th><th>ชั้นปี</th><th>จำนวนครั้งที่ขาด</th></tr></thead><tbody id="reportAbsentBody"></tbody></table>
+        </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="section-panel" id="section-settings">
+        <div class="page-header"><h2>ตั้งค่าระบบ</h2></div>
+        <div class="settings-grid">
+            <div class="settings-card">
+                <h3>⏰ ช่วงเวลาเช็กชื่อ</h3>
+                <div class="form-group"><label>เริ่มเช็กชื่อได้ (HH:MM)</label><input type="time" id="setStartTime" class="form-input"></div>
+                <div class="form-group"><label>เวลาที่ถือว่า "มาสาย" หลังจากนี้ (HH:MM)</label><input type="time" id="setLateTime" class="form-input"></div>
+                <div class="form-group"><label>ปิดรับเช็กชื่อ (HH:MM)</label><input type="time" id="setEndTime" class="form-input"></div>
+                <button class="btn-primary" onclick="saveAttendanceSettings()">บันทึกการตั้งค่า</button>
+            </div>
+            <div class="settings-card">
+                <h3>🧬 การจดจำใบหน้า</h3>
+                <div class="form-group"><label>ความเข้มงวดในการจับคู่ใบหน้า (0.3 เข้มงวด – 0.6 หลวม)</label><input type="range" id="setThreshold" min="0.3" max="0.6" step="0.01" class="form-input" oninput="document.getElementById('setThresholdVal').textContent=this.value"> <span id="setThresholdVal" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--accent);"></span></div>
+                <div class="form-group"><label>ความเชื่อมั่นขั้นต่ำในการตรวจจับใบหน้า</label><input type="range" id="setMinConf" min="0.3" max="0.8" step="0.05" class="form-input" oninput="document.getElementById('setMinConfVal').textContent=this.value"> <span id="setMinConfVal" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--accent);"></span></div>
+                <button class="btn-primary" onclick="saveFaceSettings()">บันทึกการตั้งค่า</button>
+                <div class="settings-note">การเปลี่ยนค่านี้มีผลกับการสแกนครั้งถัดไปในเบราว์เซอร์นี้เท่านั้น</div>
+            </div>
+            <div class="settings-card">
+                <h3>🏫 ข้อมูลสถาบัน</h3>
+                <div class="form-group"><label>ชื่อสถาบัน / แผนก</label><input type="text" id="setOrgName" class="form-input" placeholder="แผนกเทคโนโลยีสารสนเทศและปัญญาประดิษฐ์"></div>
+                <button class="btn-primary" onclick="saveOrgSettings()">บันทึกการตั้งค่า</button>
+            </div>
+            <div class="settings-card">
+                <h3>🔐 ความปลอดภัย</h3>
+                <p style="font-size:0.85rem;color:var(--text-secondary);line-height:1.7;">ระบบนี้เป็นแอปฝั่ง client เก็บข้อมูลใน localStorage ของเบราว์เซอร์นี้เท่านั้น — ไม่มีเซิร์ฟเวอร์ ฐานข้อมูลกลาง หรือการยืนยันตัวตนแบบเข้ารหัสจริง</p>
+                <div class="settings-note future">
+                    <b>เฟสถัดไป (ต้องมี Backend):</b> ฐานข้อมูลกลาง (เช่น Prisma/SQLite), การยืนยันตัวตนแบบ JWT/Session ฝั่งเซิร์ฟเวอร์, การเข้ารหัสข้อมูลใบหน้า, และการซิงก์ข้อมูลข้ามอุปกรณ์ — ยังไม่มีในระบบปัจจุบัน
+                </div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<!-- ========== MODALS ========== -->
+
+<!-- Login -->
+<div id="loginModal" class="modal-overlay">
+    <div class="modal-box" style="max-width:380px;">
+        <button class="modal-close" onclick="closeModal('loginModal')">✕</button>
+        <div class="modal-icon">🔒</div>
+        <h3 style="text-align:center;">เข้าสู่ระบบอาจารย์</h3>
+        <p style="color:var(--text-muted);font-size:0.75rem;margin-bottom:12px;text-align:center;">⚠️ ระบบนี้เป็น Demo — รหัสผ่านฝังในโค้ด frontend ไม่ปลอดภัยสำหรับ production</p>
+        <div class="form-group"><label>ชื่อผู้ใช้</label><input type="text" id="adminUser" placeholder="Username" class="form-input"></div>
+        <div class="form-group"><label>รหัสผ่าน</label><input type="password" id="adminPass" placeholder="Password" class="form-input" onkeypress="if(event.key==='Enter')checkAdminLogin()"></div>
+        <button class="btn-primary" style="width:100%;margin-top:8px;justify-content:center;" onclick="checkAdminLogin()">เข้าสู่ระบบ</button>
+        <p id="loginError" style="color:var(--red);text-align:center;margin-top:8px;display:none;">❌ ข้อมูลไม่ถูกต้อง</p>
+    </div>
+</div>
+
+<!-- Admin Dashboard -->
+<div id="adminDashboardModal" class="modal-overlay">
+    <div class="modal-box" style="max-width:760px;">
+        <button class="modal-close" onclick="closeModal('adminDashboardModal')" aria-label="ปิด">✕</button>
+        <h3>🎓 ระบบจัดการ — อาจารย์</h3>
+        <div class="admin-grid">
+            <div class="admin-card" onclick="openAdminWeekly()"><div class="admin-card-icon">📅</div><div class="admin-card-title">รายชื่อสัปดาห์นี้</div><div class="admin-card-sub">ดูผู้เข้าแถวล่าสุด</div></div>
+            <div class="admin-card" onclick="openAdminStats()"><div class="admin-card-icon">📊</div><div class="admin-card-title">สถิติ 18 สัปดาห์</div><div class="admin-card-sub">วิเคราะห์การเข้าแถว</div></div>
+            <div class="admin-card" onclick="openAdminAllWeeks()"><div class="admin-card-icon">📂</div><div class="admin-card-title">ข้อมูลทุกสัปดาห์</div><div class="admin-card-sub">เลือกดูรายสัปดาห์</div></div>
+            <div class="admin-card" onclick="openAdminLeave()"><div class="admin-card-icon">📝</div><div class="admin-card-title">สถิติการลา</div><div class="admin-card-sub">นับจำนวนลาแต่ละคน</div></div>
+            <div class="admin-card" onclick="exportCSV('all');closeModal('adminDashboardModal')"><div class="admin-card-icon">📥</div><div class="admin-card-title">Export ข้อมูล</div><div class="admin-card-sub">ดาวน์โหลด CSV</div></div>
+            <div class="admin-card" onclick="exportBackup()"><div class="admin-card-icon">💾</div><div class="admin-card-title">สำรองข้อมูล</div><div class="admin-card-sub">บันทึกข้อมูลทั้งหมด</div></div>
+            <div class="admin-card" onclick="importBackup()"><div class="admin-card-icon">📂</div><div class="admin-card-title">นำเข้าข้อมูล</div><div class="admin-card-sub">กู้คืนข้อมูล</div></div>
+            <div class="admin-card danger-card" onclick="clearAllData()"><div class="admin-card-icon">🗑️</div><div class="admin-card-title">ล้างข้อมูลทั้งหมด</div><div class="admin-card-sub">รีเซ็ตการเข้าแถว</div></div>
+        </div>
+    </div>
+</div>
+
+<!-- Admin Data -->
+<div id="adminDataModal" class="modal-overlay">
+    <div class="modal-box" style="max-width:720px;">
+        <button class="modal-close" onclick="closeModal('adminDataModal')">✕</button>
+        <h3 id="adminDataTitle">ข้อมูล</h3>
+        <div class="table-card" style="margin-top:12px;">
+            <table class="data-table"><thead id="adminTableHead"></thead><tbody id="adminTableBody"></tbody></table>
+        </div>
+    </div>
+</div>
+
+<!-- Week Select -->
+<div id="weekSelectModal" class="modal-overlay">
+    <div class="modal-box" style="max-width:600px;">
+        <button class="modal-close" onclick="closeModal('weekSelectModal')">✕</button>
+        <h3>📂 เลือกสัปดาห์</h3>
+        <div class="week-grid" id="weekGrid"></div>
+    </div>
+</div>
+
+<!-- Confirm Register -->
+<div id="confirmRegisterModal" class="modal-overlay">
+    <div class="modal-box" style="max-width:440px;text-align:center;">
+        <button class="modal-close" onclick="closeModal('confirmRegisterModal')">✕</button>
+        <div class="modal-icon">✅</div>
+        <h3>ยืนยันข้อมูลก่อนบันทึก</h3>
+        <div class="confirm-info" id="confirmInfo"></div>
+        <div class="confirm-thumbs" id="confirmThumbs"></div>
+        <div style="display:flex;gap:10px;margin-top:16px;">
+            <button class="btn-danger" style="flex:1;justify-content:center;" onclick="closeModal('confirmRegisterModal')">← แก้ไข</button>
+            <button class="btn-primary" style="flex:1;justify-content:center;" onclick="doSaveRegister()">✅ บันทึกเลย</button>
+        </div>
+    </div>
+</div>
+
+<!-- Student Detail -->
+<div id="studentDetailModal" class="modal-overlay">
+    <div class="modal-box" style="max-width:520px;">
+        <button class="modal-close" onclick="closeModal('studentDetailModal')">✕</button>
+        <div class="student-detail-header">
+            <div class="student-detail-avatar" id="sdAvatar">–</div>
+            <div>
+                <h3 style="margin-bottom:2px;" id="sdName">—</h3>
+                <div style="color:var(--text-muted);font-size:0.82rem;" id="sdSub">—</div>
+            </div>
+        </div>
+        <div class="form-group"><label>ชื่อ-นามสกุล</label><input type="text" id="sdNameInput" class="form-input"></div>
+        <div class="form-group"><label>ชั้นปี</label><input type="text" id="sdYearInput" class="form-input"></div>
+        <div style="display:flex;gap:8px;margin-bottom:14px;">
+            <button class="btn-primary" onclick="saveStudentEdit()">💾 บันทึกการแก้ไข</button>
+            <button class="btn-danger-sm" onclick="deleteStudentFromDetail()">🗑️ ลบนักศึกษา</button>
+        </div>
+        <div class="report-section-title" style="margin-top:6px;">ประวัติการเข้าแถวล่าสุด</div>
+        <div id="sdHistory"></div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+<script src="register.js"></script>
+<script src="scan.js"></script>
+<script src="keywords.js"></script>
+<script src="chatbot.js"></script>
+<script src="leave.js"></script>
+</body>
+</html>
