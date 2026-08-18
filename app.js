@@ -7,6 +7,8 @@ let leaveList       = [];
 var CONFIG = {
     FACE_MATCH_THRESHOLD: 0.48,
     FACE_DETECT_MIN_CONFIDENCE: 0.5,
+    FACE_TEMPLATE_COUNT: 20,
+    FACE_CONFIRM_FRAMES: 3,
     ATTENDANCE_START_TIME: '07:30',
     LATE_TIME: '08:00',
     ATTENDANCE_END_TIME: '08:30',
@@ -35,6 +37,8 @@ var CONFIG = {
         if (s.attendanceEndTime)   CONFIG.ATTENDANCE_END_TIME = s.attendanceEndTime;
         if (s.faceMatchThreshold)  CONFIG.FACE_MATCH_THRESHOLD = parseFloat(s.faceMatchThreshold);
         if (s.faceMinConfidence)   CONFIG.FACE_DETECT_MIN_CONFIDENCE = parseFloat(s.faceMinConfidence);
+        if (s.faceTemplateCount)   CONFIG.FACE_TEMPLATE_COUNT = parseInt(s.faceTemplateCount, 10) || CONFIG.FACE_TEMPLATE_COUNT;
+        if (s.faceConfirmFrames)   CONFIG.FACE_CONFIRM_FRAMES = parseInt(s.faceConfirmFrames, 10) || CONFIG.FACE_CONFIRM_FRAMES;
     } catch (e) { console.error('applySavedSettingsToConfig error:', e); }
 })();
 
@@ -140,7 +144,7 @@ var DataStore = {
                 throw new Error('DataStore: value must be array for ' + key);
             }
             const json = JSON.stringify(value);
-            if (json.length > 5 * 1024 * 1024) {
+            if (json.length > 20 * 1024 * 1024) {
                 throw new Error('DataStore: data too large for ' + key);
             }
             localStorage.setItem(key, json);
@@ -1277,9 +1281,12 @@ function loadUserSettings() {
     setVal('setEndTime',   CONFIG.ATTENDANCE_END_TIME);
     setVal('setThreshold', CONFIG.FACE_MATCH_THRESHOLD);
     setVal('setMinConf',   CONFIG.FACE_DETECT_MIN_CONFIDENCE);
+    setVal('setTemplateCount', CONFIG.FACE_TEMPLATE_COUNT);
+    setVal('setConfirmFrames', CONFIG.FACE_CONFIRM_FRAMES);
     setVal('setOrgName',   s.orgName || '');
     setText('setThresholdVal', CONFIG.FACE_MATCH_THRESHOLD);
     setText('setMinConfVal', CONFIG.FACE_DETECT_MIN_CONFIDENCE);
+    setText('setConfirmFramesVal', CONFIG.FACE_CONFIRM_FRAMES);
 }
 function setVal(id, val) { const el = document.getElementById(id); if (el) el.value = val; }
 function saveAttendanceSettings() {
@@ -1299,10 +1306,14 @@ function saveAttendanceSettings() {
 function saveFaceSettings() {
     const th = parseFloat(document.getElementById('setThreshold').value);
     const mc = parseFloat(document.getElementById('setMinConf').value);
+    const tc = parseInt(document.getElementById('setTemplateCount').value, 10) || CONFIG.FACE_TEMPLATE_COUNT;
+    const cf = parseInt(document.getElementById('setConfirmFrames').value, 10) || CONFIG.FACE_CONFIRM_FRAMES;
     CONFIG.FACE_MATCH_THRESHOLD = th;
     CONFIG.FACE_DETECT_MIN_CONFIDENCE = mc;
+    CONFIG.FACE_TEMPLATE_COUNT = tc;
+    CONFIG.FACE_CONFIRM_FRAMES = cf;
     const s = DataStore.getSettings();
-    s.faceMatchThreshold = th; s.faceMinConfidence = mc;
+    s.faceMatchThreshold = th; s.faceMinConfidence = mc; s.faceTemplateCount = tc; s.faceConfirmFrames = cf;
     DataStore.saveSettings(s);
     showToast('💾 บันทึกการตั้งค่าการจดจำใบหน้าแล้ว (มีผลตั้งแต่การสแกนครั้งถัดไป)');
 }

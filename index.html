@@ -197,13 +197,13 @@
                 <div class="register-header">
                     <div class="register-icon">📸</div>
                     <h2>ลงทะเบียนนักศึกษา</h2>
-                    <p>กรอกข้อมูล แล้วถ่ายรูปให้ครบ 5 มุม</p>
+                    <p>กรอกข้อมูล แล้วเปิดกล้ำยเก็บ 200 ตัวอย่างใบหน้า (หลากมุม)</p>
                 </div>
 
                 <div class="stepper" id="regStepper">
                     <div class="stepper-step active" id="step1"><div class="stepper-circle">1</div><div class="stepper-label">ข้อมูล</div></div>
                     <div class="stepper-step" id="step2"><div class="stepper-circle">2</div><div class="stepper-label">เตรียมกล้อง</div></div>
-                    <div class="stepper-step" id="step3"><div class="stepper-circle">3</div><div class="stepper-label">ถ่ายภาพ</div></div>
+                    <div class="stepper-step" id="step3"><div class="stepper-circle">3</div><div class="stepper-label">เก็บตัวอย่าง</div></div>
                     <div class="stepper-step" id="step4"><div class="stepper-circle">4</div><div class="stepper-label">ตรวจสอบ</div></div>
                     <div class="stepper-step" id="step5"><div class="stepper-circle">5</div><div class="stepper-label">เสร็จสิ้น</div></div>
                 </div>
@@ -223,11 +223,7 @@
 
                 <div class="capture-section">
                     <div class="capture-slots-row" id="captureSlots">
-                        <div class="slot" id="slot0"><span>1</span><div class="slot-label">ตรง</div></div>
-                        <div class="slot" id="slot1"><span>2</span><div class="slot-label">ซ้าย</div></div>
-                        <div class="slot" id="slot2"><span>3</span><div class="slot-label">ขวา</div></div>
-                        <div class="slot" id="slot3"><span>4</span><div class="slot-label">ก้ม</div></div>
-                        <div class="slot" id="slot4"><span>5</span><div class="slot-label">เงย</div></div>
+                        <span class="sample-counter-text" id="sampleCounter">ตัวอย่าง 0 / 200</span>
                     </div>
                     <div class="capture-instruction" id="captureInstruction">กด "ถ่ายรูป" เพื่อเก็บมุมที่ 1 (มองตรง)</div>
                     <div class="capture-btn-row">
@@ -454,6 +450,19 @@
                 <h3>🧬 การจดจำใบหน้า</h3>
                 <div class="form-group"><label>ความเข้มงวดในการจับคู่ใบหน้า (0.3 เข้มงวด – 0.6 หลวม)</label><input type="range" id="setThreshold" min="0.3" max="0.6" step="0.01" class="form-input" oninput="document.getElementById('setThresholdVal').textContent=this.value"> <span id="setThresholdVal" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--accent);"></span></div>
                 <div class="form-group"><label>ความเชื่อมั่นขั้นต่ำในการตรวจจับใบหน้า</label><input type="range" id="setMinConf" min="0.3" max="0.8" step="0.05" class="form-input" oninput="document.getElementById('setMinConfVal').textContent=this.value"> <span id="setMinConfVal" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--accent);"></span></div>
+<div class="form-group"><label>จำนวนเทมเพลตที่ใช้จัดการเข้าแถว (5–40, มีผลตอนลงทะเบียนใหม่)</label><input type="range" id="setTemplateCount" min="5" max="40" step="1" class="form-input" oninput="document.getElementById('setTemplateCountVal').textContent=this.value"> <span id="setTemplateCountVal" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--accent);"></span></div>
+<div class="form-group"><label><input type="checkbox" id="calibrateMode" onchange="toggleCalibration(this.checked)"> โหมดสอนถาวร (dev)</label></div>
+<div id="calControls" style="display:none">
+    <div class="form-group"><select id="calStudent" class="form-input"></select></div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+        <button class="btn-secondary" onclick="startCalibrationRun()">เริ่มบันทึก</button>
+        <button class="btn-secondary" onclick="stopCalibrationRun()">หยุด</button>
+        <button class="btn-secondary" onclick="runCalibrationSweep()">สร้างตารางธงศ์</button>
+    </div>
+    <div id="calStatus" style="font-size:0.78rem;color:var(--text-muted);margin-top:6px"></div>
+    <div id="calReport" class="cal-report"></div>
+</div>
+                <div class="form-group"><label>เฟรมยืนยันตัวบุคคลก่อนเช็กชื่อ (2–8)</label><input type="range" id="setConfirmFrames" min="2" max="8" step="1" class="form-input" oninput="document.getElementById('setConfirmFramesVal').textContent=this.value"> <span id="setConfirmFramesVal" style="font-family:var(--font-mono);font-size:0.8rem;color:var(--accent);"></span></div>
                 <button class="btn-primary" onclick="saveFaceSettings()">บันทึกการตั้งค่า</button>
                 <div class="settings-note">การเปลี่ยนค่านี้มีผลกับการสแกนครั้งถัดไปในเบราว์เซอร์นี้เท่านั้น</div>
             </div>
@@ -566,8 +575,9 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="app.js"></script>
-<script src="register.js"></script>
+    <script src="app.js"></script>
+    <script src="calibrate.js"></script>
+    <script src="register.js"></script>
 <script src="scan.js"></script>
 <script src="keywords.js"></script>
 <script src="chatbot.js"></script>

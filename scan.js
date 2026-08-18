@@ -5,6 +5,8 @@ let isScanning           = false;
 let isProcessing         = false;
 let lastCheckinAt        = 0;
 const CHECKIN_COOLDOWN_MS = 3000; // กันกดซ้ำ/ยิงบันทึกซ้ำเร็วเกินไปหลังเช็กอินสำเร็จ
+let confirmCounter      = 0;
+let pendingLabel        = null;
 
 async function startScanning() {
     if (!registeredFaces || registeredFaces.length === 0) {
@@ -53,6 +55,7 @@ async function startScanning() {
         if (!isScanning || isProcessing) return;
         isProcessing = true;
         try {
+            const t0 = (performance && performance.now) ? performance.now() : Date.now();
             const detections = await faceapi
                 .detectAllFaces(video, new faceapi.SsdMobilenetv1Options({ minConfidence: CONFIG.FACE_DETECT_MIN_CONFIDENCE }))
                 .withFaceLandmarks()
@@ -63,6 +66,7 @@ async function startScanning() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             if (resized.length === 0) {
+                confirmCounter = 0; pendingLabel = null;
                 hideDetectCard(); hideUnknownCard();
                 setStatusCard('detecting', '🔍', 'กำลังตรวจจับใบหน้า...');
                 return;
@@ -70,12 +74,25 @@ async function startScanning() {
 
             // Validate: only 1 face at a time
             if (resized.length > 1) {
-                setStatusCard('detecting', '⚠️', 'กรุณาให้มีเพียง 1 คนในกรอบ');
+                confirmCounter = 0; pendingLabel = null;
+                setStatusCard('detecting', '⚠️', 'กรุณาให้มีใบหน้าเพียง 1 คนในกรอบสแกน');
                 hideDetectCard(); hideUnknownCard();
                 return;
             }
 
             setStatusCard('recognizing', '🧬', 'กำลังจดจำใบหน้า...');
+
+            if (typeof Calibration !== 'undefined' && Calibration.isActive()) {
+                const face = resized[0];
+                const lat = (performance && performance.now) ? (performance.now() - t0) : 0;
+                const cal = Calibration.recordFrame(face.descriptor, face.detection.score, lat);
+                drawCornerBox(ctx, face.detection.box, '#0ea5e9');
+                const exp = Calibration.expectedId == null ? '__stranger__' : Calibration.expectedId;
+                const mark = (cal.nearestId === Calibration.expectedId) ? '✅' : '❌';
+                setStatusCard('recognizing', '🧪', `สอนถาวร: ${exp} | ใกล้สุด=${cal.nearestId || '-'} | d=${cal.distance.toFixed(3)} ${mark}`);
+                hideDetectCard(); hideUnknownCard();
+                return;
+            }
 
             const results = resized.map(d => matcher.findBestMatch(d.descriptor));
             let foundKnown = false, foundUnknown = false;
@@ -85,12 +102,14 @@ async function startScanning() {
                 const box      = detection.box;
                 const isUnknown = result.label === 'unknown';
                 const color    = isUnknown ? '#dc2626' : '#0ea5e9';
+                const conf  = Math.round((1 - result.distance) * 100);
 
                 // Face size validation
                 const faceArea = box.width * box.height;
                 const frameArea = video.videoWidth * video.videoHeight;
                 if (faceArea < frameArea * 0.05) {
-                    setStatusCard('detecting', '↔️', 'ขยับเข้าใกล้กล้องอีกนิด');
+                    confirmCounter = 0; pendingLabel = null;
+                    setStatusCard('detecting', '↔️', 'ขยับเข้าใกล้กล้ำอีกนิด');
                     return;
                 }
 
@@ -98,7 +117,6 @@ async function startScanning() {
                 drawCornerBox(ctx, box, color);
 
                 const label = isUnknown ? '[ UNKNOWN ]' : `[ ${result.label.split('|||')[0]} ]`;
-                const conf  = Math.round((1 - result.distance) * 100);
                 ctx.save(); ctx.scale(-1,1);
                 ctx.fillStyle = color;
                 ctx.font = 'bold 13px JetBrains Mono, monospace';
@@ -106,13 +124,17 @@ async function startScanning() {
                 if (!isUnknown) { ctx.fillStyle='rgba(14,165,233,0.85)'; ctx.font='11px monospace'; ctx.fillText(`${conf}%`, -(box.x + box.width), box.y + box.height + 16); }
                 ctx.restore();
 
-                if (!isUnknown) {
+                const liveLabel = isUnknown ? null : result.label;
+                const st = confirmStep({ label: pendingLabel, counter: confirmCounter }, liveLabel, CONFIG.FACE_CONFIRM_FRAMES);
+                pendingLabel = st.label;
+                confirmCounter = st.counter;
+                if (st.confirmed) {
                     foundKnown = true;
-                    if (currentDetectedLabel !== result.label) {
-                        currentDetectedLabel = result.label;
-                        showDetectCard(result.label, conf);
+                    if (currentDetectedLabel !== liveLabel) {
+                        currentDetectedLabel = liveLabel;
+                        showDetectCard(liveLabel, conf);
                     }
-                } else {
+                } else if (isUnknown) {
                     foundUnknown = true;
                 }
             });

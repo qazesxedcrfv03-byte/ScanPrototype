@@ -1,36 +1,293 @@
-// register.js — ถ่ายทีละมุม, confirm, ตรวจซ้ำ
-const ANGLES = [
-    { label: 'มุมที่ 1 / 5 — มองตรง',      hint: '↕ มองตรงๆ',        arrow: '↕ มองตรงๆ' },
-    { label: 'มุมที่ 2 / 5 — หันซ้ายนิด',   hint: '← หันซ้ายเล็กน้อย', arrow: '← หันซ้าย' },
-    { label: 'มุมที่ 3 / 5 — หันขวานิด',    hint: '→ หันขวาเล็กน้อย',  arrow: '→ หันขวา' },
-    { label: 'มุมที่ 4 / 5 — ก้มหน่อย',     hint: '↓ ก้มลงเล็กน้อย',   arrow: '↓ ก้มลง' },
-    { label: 'มุมที่ 5 / 5 — เงยหน่อย',     hint: '↑ เงยขึ้นเล็กน้อย',  arrow: '↑ เงยขึ้น' },
-];
+// register.js — เก็บ 200 ตัวอย่างใบหน้าหลากมุมเป็นชุดข้อมูล แล้วสร้างเทมเพลต compact สำหร้บันทึก
+const REG_TARGET_SAMPLES  = 200;   // จำนวนตัวอย่างขั้นต่ำที่ต้องเก็บก่อนบันทึก
+const REG_SAMPLE_INTERVAL_MS = 110;  // รอบการจับคู่ต่อครั้ง (หน่วย ms)
+const REG_DIVERSITY_MIN = 0.08;      // ระดับการลากบ่อยขั้นต่ำก่อนยอมรับตัวอย่างใหม่ (เว้นตัวอย่างซ้ำกับขณะยังอยู่)
+const REG_FACE_MIN_SIZE_RATIO = 0.10; // ใบหน้ารวมต้อง >= 10% ของเฟรม
+const REG_THUMB_EVERY = 20;          // เก็บรูปตัวอย่างย่อทุก N ตัวอย่าง (เพื่อแ prev้ว)
 
-let capturedDescriptors = [];
-let capturedThumbURLs   = [];
-let currentAngle        = 0;
-let isCapturing         = false;
+let capturedDescriptors = []; // Float32Array[] (128) — ชุดข้อมูลต้นทาง 200 ตัวอย่าง
+let capturedThumbs      = []; // dataURL ย่อ (sparse) เพื่อ preview
+let capturedSamplesArr  = []; // Array[] (128) ที่พร้อมสำหรับเก็บ (JSON-ready) — เทียบกับ capturedDescriptors
+let isSampling          = false;
+let regProcessing       = false;
+let regInterval         = null;
+let lastSampleAt        = 0;
+let lastStoredDesc      = null;
+let pendingTemplates    = null;   // ใช้ร่วมกันกับ doSaveRegister เพื่อไม่คำนวณซ้ำ
 
-// เรียกตอนโหลดหน้า register
-function initRegisterUI() {
-    resetCapture();
+function initRegisterUI() { resetCapture(); }
+
+function resetCapture() {
+    stopSampling();
+    capturedDescriptors = [];
+    capturedSamplesArr  = [];
+    capturedThumbs      = [];
+    pendingTemplates    = null;
+    const counter = document.getElementById('sampleCounter');
+    if (counter) counter.textContent = `ตัวอย่าง 0 / ${REG_TARGET_SAMPLES}`;
+    const fill = document.getElementById('progressFill');
+    if (fill) fill.style.width = '0%';
+    const rp = document.getElementById('regProgress');
+    if (rp) rp.style.display = 'none';
+    const rb = document.getElementById('registerBtn');
+    if (rb) rb.style.display = 'none';
+    const btn = document.getElementById('captureBtn');
+    if (btn) { btn.disabled = false; btn.textContent = '▶ เริ่มเก็บตัวอย่าง (200)'; }
+    setRegInstruction('กรอกข้อมูลให้ครบ แล้วกด "เริ่มเก็บตัวอย่าง" แล้วเคลื่อนหัว: ซ้าย–ขวา / ก้ม–เงย / ขยับเข้า–ออก เบา ๆ');
+    setRegGuide('↕↔ เคลื่อนที่');
+    clearCamOverlay();
+    updateStepper();
 }
 
-// ── Stepper (UI เท่านั้น — ไม่แตะ logic การตรวจจับ/บันทึกใบหน้าที่ทำงานอยู่แล้ว) ──
-// step 1 กรอกข้อมูล → 2 เตรียมกล้อง (ข้อมูลครบแต่ยังไม่เริ่มถ่าย) → 3 กำลังถ่ายภาพ → 4 ครบ 5 มุม รอตรวจสอบ/ยืนยัน → 5 เสร็จสิ้น
+function setRegInstruction(text) {
+    const el = document.getElementById('captureInstruction');
+    if (el) el.textContent = text;
+}
+function setRegGuide(text) {
+    const el = document.getElementById('guideArrowText');
+    if (el) el.textContent = text;
+}
+function clearCamOverlay() {
+    try {
+        const c = document.getElementById('canvas2');
+        if (c) { const ctx = c.getContext('2d'); if (ctx) ctx.clearRect(0, 0, c.width, c.height); }
+    } catch (e) { /* ignore */ }
+}
+
+function captureOneFace() {
+    if (!cameraActive) { showToast('⚠️ กล้ำยังไม่พร้อม กรุณารอสักครู่'); return; }
+    if (isSampling) { stopSampling(); return; }
+    startSampling();
+}
+
+function startSampling() {
+    const name = document.getElementById('name')?.value.trim();
+    const id   = document.getElementById('studentId')?.value.trim();
+    const year = document.getElementById('year')?.value.trim();
+    if (!name) { showToast('⚠️ กรุณากรอกชื่อ-นามสกุล'); return; }
+    if (!id)   { showToast('⚠️ กรุณากรอกรหัสประจำตัว'); return; }
+    if (!year) { showToast('⚠️ กรุณากรอกชั้นปี'); return; }
+
+    isSampling = true; regProcessing = false;
+    lastSampleAt = 0; lastStoredDesc = null;
+    const btn = document.getElementById('captureBtn');
+    if (btn) { btn.disabled = false; btn.textContent = '⏹ หยุม'; }
+    setRegInstruction('🔄 กำลังเก็บตัวอย่างใบหน้า... หันซ้าย–ขวา / ก้ม–เงย / ขยับเข้า–ออก เบา ๆ เพื่อให้ได้มุมหลากหลาย');
+    setRegGuide('↕↔ เคลื่อนที่');
+    document.getElementById('registerBtn').style.display = 'none';
+    regInterval = setInterval(registrationLoop, REG_SAMPLE_INTERVAL_MS);
+    updateStepper();
+}
+
+function stopSampling() {
+    isSampling = false;
+    clearInterval(regInterval); regInterval = null;
+    regProcessing = false;
+    const btn = document.getElementById('captureBtn');
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = capturedDescriptors.length >= REG_TARGET_SAMPLES
+            ? '▶ เก็บเพิ่ม (อีกครั้ง)'
+            : `▶ เริ่มเก็บตัวอย่าง (200)`;
+    }
+    if (capturedDescriptors.length >= REG_TARGET_SAMPLES) {
+        setRegInstruction('✅ ครบ 200 ตัวอย่างแล้ว — กด "ยืนยันบันทึก" ด้านล่าง');
+    } else {
+        setRegInstruction(`เก็บไปแล้ว ${capturedDescriptors.length} / ${REG_TARGET_SAMPLES} ตัวอย่าง — กด "เริ่มเก็บตัวอย่าง" เพื่อเก็บเพิ่ม`);
+    }
+    setRegGuide('↕↔ เคลื่อนที่');
+    clearCamOverlay();
+}
+
+async function registrationLoop() {
+    if (!isSampling) return;
+    if (regProcessing) return;
+    regProcessing = true;
+    try {
+        const videoEl = document.getElementById('video2') || document.getElementById('video');
+        if (!videoEl || videoEl.readyState < 2) return;
+
+        const detection = await faceapi
+            .detectSingleFace(videoEl, new faceapi.SsdMobilenetv1Options({ minConfidence: CONFIG.FACE_DETECT_MIN_CONFIDENCE }))
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+
+        drawRegOverlay(detection, videoEl);
+
+        if (!detection) {
+            setRegInstruction('🔍 หาใบหน้าไม่เจอ — อยู่ในกรอบและมองหน้าเซียน');
+            return;
+        }
+        const box = detection.detection.box;
+        const fw = videoEl.videoWidth  || 640;
+        const fh = videoEl.videoHeight || 480;
+        const frameArea = fw * fh;
+
+        if (box.width * box.height < frameArea * REG_FACE_MIN_SIZE_RATIO) {
+            setRegInstruction('↔️ ขยับเข้าใกล้กล้ำยอีกนิด (ให้ใบหน้าใหญ่ขึ้น)');
+            return;
+        }
+
+        const desc = detection.descriptor;          // Float32Array (128)
+        const now  = Date.now();
+
+        // ป้องกันเก็บภาพซ้ำ/ปิดลง — ต้องมีการเคลื่อนไหวบางระดับ
+        if (now - lastSampleAt < REG_SAMPLE_INTERVAL_MS) return;
+        if (lastStoredDesc) {
+            let skip = false;
+            try { skip = faceapi.euclideanDistance(desc, lastStoredDesc) < REG_DIVERSITY_MIN; } catch (e) { skip = false; }
+            if (skip) return;
+        }
+
+        // ยอมรับตัวอย่าง
+        capturedDescriptors.push(desc);              // เก็บ Float32Array ไว้ประมวลผลต่อไป
+        capturedSamplesArr.push(Array.from(desc));   // JSON-ready (เก็บใน localStorage)
+        lastStoredDesc = desc;
+        lastSampleAt   = now;
+
+        if (capturedDescriptors.length % REG_THUMB_EVERY === 0) {
+            capturedThumbs.push(cropFaceThumb(detection, videoEl));
+        }
+        updateRegProgress();
+
+        if (capturedDescriptors.length >= REG_TARGET_SAMPLES) {
+            stopSampling();
+        }
+    } catch (err) {
+        console.error('registrationLoop error:', err);
+    } finally {
+        regProcessing = false;
+    }
+}
+
+function drawRegOverlay(detection, videoEl) {
+    try {
+        const canvas = document.getElementById('canvas2');
+        if (!canvas || !detection) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        faceapi.matchDimensions(canvas, { width: videoEl.videoWidth || 640, height: videoEl.videoHeight || 480 });
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const box = detection.detection.box;
+        const fw  = videoEl.videoWidth  || 640;
+        const fh  = videoEl.videoHeight || 480;
+        const ok  = (box.width * box.height) >= fw * fh * REG_FACE_MIN_SIZE_RATIO;
+        const color = ok ? '#22c55e' : '#f59e0b';
+        ctx.save();
+        ctx.scale(-1, 1);                 // กล้ำยเป็น mirror (consistent กับ cropFaceThumb)
+        ctx.translate(-canvas.width, 0);
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 2.5;
+        ctx.beginPath();
+        ctx.rect(canvas.width - (box.x + box.width), box.y, box.width, box.height);
+        ctx.stroke();
+        ctx.restore();
+    } catch (e) { /* ignore canvas errors */ }
+}
+
+function cropFaceThumb(detection, videoEl) {
+    try {
+        const box    = detection.detection.box;
+        const pad    = 16;
+        const sx     = Math.max(0, box.x - pad);
+        const sy     = Math.max(0, box.y - pad);
+        const sw     = Math.min(box.width  + pad * 2, (videoEl.videoWidth  || 640) - sx);
+        const sh     = Math.min(box.height + pad * 2, (videoEl.videoHeight || 480) - sy);
+        const c      = document.createElement('canvas');
+        c.width = 70; c.height = 70;
+        const ctx = c.getContext('2d');
+        ctx.save(); ctx.scale(-1, 1); ctx.translate(-70, 0);   // กล้ำยเป็น mirror
+        ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, 70, 70);
+        ctx.restore();
+        return c.toDataURL('image/jpeg', 0.8);
+    } catch { return ''; }
+}
+
+function updateRegProgress() {
+    const n = capturedDescriptors.length;
+    const pct = Math.min(100, Math.round(n / REG_TARGET_SAMPLES * 100));
+    const counter = document.getElementById('sampleCounter');
+    if (counter) counter.textContent = `ตัวอย่าง ${n} / ${REG_TARGET_SAMPLES}`;
+    const fill = document.getElementById('progressFill');
+    if (fill) fill.style.width = pct + '%';
+    const rp = document.getElementById('regProgress');
+    if (rp) rp.style.display = 'block';
+    const rs = document.getElementById('reg-status');
+    if (rs) rs.textContent = `กำลังเก็บตัวอย่าง... ${n} / ${REG_TARGET_SAMPLES}`;
+    const angleText = document.getElementById('currentAngleText');
+    if (angleText) angleText.textContent = `📍 ตัวอย่าง ${n} / ${REG_TARGET_SAMPLES}`;
+    const rb = document.getElementById('registerBtn');
+    if (rb) rb.style.display = (n >= REG_TARGET_SAMPLES) ? 'flex' : 'none';
+}
+
+// สร้างเทมเพลต compact (CONFIG.FACE_TEMPLATE_COUNT รายการ) จากชุดข้อมูล 200 ตัวอย่าง
+// ขั้นตอน: (1) กรองตัวอย่างผิดคลื่น (outlier) จากเมตริกซ้ำ่วย centroid, (2) greedy k-center
+// (max-min diversification) เลือกเทมเพลตหลากมุมและไม่ซ้ำกัน
+function selectTemplates(samples, k) {
+    const n = samples.length;
+    const K = Math.min(k, n);
+    if (n === 0) return [];
+    if (n <= K) return samples.map(s => Array.from(s));
+
+    const dim = samples[0].length; // 128
+    const centroid = new Float32Array(dim);
+    for (const s of samples) {
+        for (let i = 0; i < dim; i++) centroid[i] += s[i];
+    }
+    for (let i = 0; i < dim; i++) centroid[i] /= n;
+
+    const dists = samples.map(s => faceapi.euclideanDistance(centroid, s));
+    const med = median(dists);
+    const mad = median(dists.map(d => Math.abs(d - med))) || 0;
+    const sigma = 1.4826 * mad;
+    const meanDist = dists.reduce((a, b) => a + b, 0) / n;
+    const outlierThresh = Math.max(med + 3 * sigma, meanDist * 1.5, med + 0.3);
+    let pool = samples.filter((_, i) => dists[i] <= outlierThresh);
+    if (pool.length < Math.max(K, 8)) pool = samples.slice();
+
+    let first = 0, best = Infinity;
+    for (let i = 0; i < pool.length; i++) {
+        const d = faceapi.euclideanDistance(centroid, pool[i]);
+        if (d < best) { best = d; first = i; }
+    }
+    const picked = [first];
+    const minD = new Array(pool.length);
+    for (let i = 0; i < pool.length; i++) minD[i] = faceapi.euclideanDistance(pool[i], pool[first]);
+
+    for (let sel = 1; sel < K; sel++) {
+        let farIdx = -1, farVal = -1;
+        for (let i = 0; i < pool.length; i++) {
+            if (minD[i] > farVal) { farVal = minD[i]; farIdx = i; }
+        }
+        if (farIdx === -1) break;
+        picked.push(farIdx);
+        for (let i = 0; i < pool.length; i++) {
+            const d = faceapi.euclideanDistance(pool[i], pool[farIdx]);
+            if (d < minD[i]) minD[i] = d;
+        }
+    }
+    return picked.map(i => Array.from(pool[i]));
+}
+
+function median(arr) {
+    const a = arr.slice().sort((x, y) => x - y);
+    const mid = a.length >> 1;
+    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
+}
+
 function updateStepper() {
     const name = document.getElementById('name')?.value.trim();
     const id   = document.getElementById('studentId')?.value.trim();
     const year = document.getElementById('year')?.value.trim();
     const infoComplete    = !!(name && id && year);
-    const captureStarted  = currentAngle > 0;
-    const captureComplete = currentAngle >= 5;
+    const samplingStarted = capturedDescriptors.length > 0;
+    const samplingDone    = capturedDescriptors.length >= REG_TARGET_SAMPLES;
 
     let active = 1;
-    if (captureComplete)          active = 4;
-    else if (captureStarted)      active = 3;
-    else if (infoComplete)        active = 2;
+    if (samplingDone)    active = 4;   // รอยยืนยัน (review)
+    else if (samplingStarted) active = 3; // เก็บตัวอย่าง
+    else if (infoComplete)  active = 2;  // เตรียมกล้ำย
 
     for (let i = 1; i <= 5; i++) {
         const el = document.getElementById('step' + i);
@@ -40,6 +297,7 @@ function updateStepper() {
         else if (i === active) el.classList.add('active');
     }
 }
+
 function setStepperComplete() {
     for (let i = 1; i <= 5; i++) {
         const el = document.getElementById('step' + i);
@@ -50,242 +308,112 @@ function setStepperComplete() {
     document.getElementById('step5')?.classList.add('active');
 }
 
-function resetCapture() {
-    capturedDescriptors = [];
-    capturedThumbURLs   = [];
-    currentAngle        = 0;
-    isCapturing         = false;
-    updateAngleUI();
-    for (let i = 0; i < 5; i++) {
-        const s = document.getElementById(`slot${i}`);
-        if (!s) continue;
-        s.classList.remove('filled', 'active-slot');
-        s.innerHTML = `<span>${i+1}</span><div class="slot-label">${['ตรง','ซ้าย','ขวา','ก้ม','เงย'][i]}</div>`;
-    }
-    const btn = document.getElementById('captureBtn');
-    if (btn) { btn.disabled = false; btn.textContent = '📷 ถ่ายรูปมุมนี้'; }
-    const rb = document.getElementById('registerBtn');
-    if (rb) rb.style.display = 'none';
-    const rp = document.getElementById('regProgress');
-    if (rp) rp.style.display = 'none';
-    highlightCurrentSlot();
-    updateStepper();
-}
-
-function updateAngleUI() {
-    const ang = ANGLES[Math.min(currentAngle, 4)];
-    const ci  = document.getElementById('captureInstruction');
-    const at  = document.getElementById('currentAngleText');
-    const ga  = document.getElementById('guideArrowText');
-    if (ci) ci.textContent = `กด "ถ่ายรูป" เพื่อเก็บ${ang.label}`;
-    if (at) at.textContent = `📍 ${ang.label}`;
-    if (ga) ga.textContent = ang.arrow;
-}
-
-function highlightCurrentSlot() {
-    for (let i = 0; i < 5; i++) {
-        const s = document.getElementById(`slot${i}`);
-        if (!s) continue;
-        if (i === currentAngle && !s.classList.contains('filled')) s.classList.add('active-slot');
-        else s.classList.remove('active-slot');
-    }
-}
-
-async function captureOneFace() {
-    if (isCapturing || currentAngle >= 5) return;
-    isCapturing = true;
-    const btn = document.getElementById('captureBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ กำลังสแกน...'; }
-
-    const videoEl = document.getElementById('video2') || document.getElementById('video');
-    if (!videoEl) {
-        showToast('❌ ไม่พบกล้อง กรุณาเปิดกล้องก่อน');
-        if (btn) { btn.disabled = false; btn.textContent = '📷 ถ่ายรูปมุมนี้'; }
-        isCapturing = false;
-        return;
-    }
-
-    try {
-        const detection = await faceapi
-            .detectSingleFace(videoEl, new faceapi.SsdMobilenetv1Options({ minConfidence: CONFIG.FACE_DETECT_MIN_CONFIDENCE }))
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-
-        if (detection) {
-            const box = detection.detection.box;
-            const frameW = videoEl.videoWidth || 640;
-            const frameH = videoEl.videoHeight || 480;
-            const faceArea = box.width * box.height;
-            const frameArea = frameW * frameH;
-
-            // Face size validation — face should be at least 8% of frame
-            if (faceArea < frameArea * 0.08) {
-                showToast('⚠️ ขยับเข้าใกล้กล้องอีกนิด');
-                if (btn) { btn.disabled = false; btn.textContent = '📷 ถ่ายรูปมุมนี้'; }
-                isCapturing = false;
-                return;
-            }
-
-            // Face position validation — face should be roughly centered
-            const centerX = box.x + box.width / 2;
-            const centerY = box.y + box.height / 2;
-            const marginX = frameW * 0.15;
-            const marginY = frameH * 0.1;
-            if (centerX < marginX || centerX > frameW - marginX || centerY < marginY || centerY > frameH - marginY) {
-                showToast('⚠️ กรุณาอยู่ตรงกลางกรอบ');
-                if (btn) { btn.disabled = false; btn.textContent = '📷 ถ่ายรูปมุมนี้'; }
-                isCapturing = false;
-                return;
-            }
-
-            capturedDescriptors.push(Array.from(detection.descriptor));
-            const thumbURL = cropFaceThumb(detection, videoEl);
-            capturedThumbURLs.push(thumbURL);
-            markSlotDone(currentAngle, thumbURL);
-            currentAngle++;
-
-            if (currentAngle >= 5) {
-                const rb = document.getElementById('registerBtn');
-                if (rb) rb.style.display = 'flex';
-                const ci = document.getElementById('captureInstruction');
-                if (ci) { ci.style.color = 'var(--green)'; ci.textContent = '🎉 ครบ 5 มุมแล้ว! กด "ยืนยันบันทึก" ด้านล่าง'; }
-                if (btn) { btn.disabled = true; btn.textContent = '✅ ถ่ายครบแล้ว'; }
-                document.getElementById('currentAngleText').textContent = '✅ บันทึกครบทุกมุม — พร้อมบันทึก';
-            } else {
-                updateAngleUI();
-                highlightCurrentSlot();
-                showToast(`✅ มุมที่ ${currentAngle} บันทึกแล้ว`);
-                if (btn) { btn.disabled = false; btn.textContent = '📷 ถ่ายรูปมุมนี้'; }
-            }
-            updateStepper();
-        } else {
-            showToast('❌ หาใบหน้าไม่เจอ ลองขยับให้ตรงกรอบแล้วกดใหม่');
-            if (btn) { btn.disabled = false; btn.textContent = '📷 ถ่ายรูปมุมนี้'; }
-        }
-    } catch (err) {
-        console.error('captureOneFace error:', err);
-        showToast('❌ เกิดข้อผิดพลาดในการสแกน');
-        if (btn) { btn.disabled = false; btn.textContent = '📷 ถ่ายรูปมุมนี้'; }
-    }
-    isCapturing = false;
-}
-
-function cropFaceThumb(detection, videoEl) {
-    try {
-        const box = detection.detection.box;
-        const pad = 16;
-        const sx  = Math.max(0, box.x - pad);
-        const sy  = Math.max(0, box.y - pad);
-        const sw  = Math.min(box.width  + pad*2, videoEl.videoWidth  - sx);
-        const sh  = Math.min(box.height + pad*2, videoEl.videoHeight - sy);
-        const c   = document.createElement('canvas');
-        c.width = 70; c.height = 70;
-        const ctx = c.getContext('2d');
-        // กล้องถูก mirror — วาดกลับ
-        ctx.save(); ctx.scale(-1,1); ctx.translate(-70,0);
-        ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, 70, 70);
-        ctx.restore();
-        return c.toDataURL('image/jpeg', 0.8);
-    } catch { return ''; }
-}
-
-function markSlotDone(idx, thumbURL) {
-    const s = document.getElementById(`slot${idx}`);
-    if (!s) return;
-    s.classList.remove('active-slot');
-    s.classList.add('filled');
-    s.innerHTML = '';
-    if (thumbURL) {
-        const img = document.createElement('img');
-        img.src = thumbURL;
-        s.appendChild(img);
-    }
-    const lbl = document.createElement('div');
-    lbl.className = 'slot-label';
-    lbl.textContent = ['ตรง','ซ้าย','ขวา','ก้ม','เงย'][idx];
-    s.appendChild(lbl);
-}
-
-// เปิด Confirm Modal
 function openConfirmRegister() {
     const nameInput = document.getElementById('name');
-    const idInput = document.getElementById('studentId');
+    const idInput   = document.getElementById('studentId');
     const yearInput = document.getElementById('year');
-    
-    let name = nameInput.value.trim();
-    let id = idInput.value.trim();
-    let year = yearInput.value.trim();
-    
+
+    const name = nameInput?.value.trim();
+    const id   = idInput?.value.trim();
+    const year = yearInput?.value.trim();
+
     if (!name) { showToast('⚠️ กรุณากรอกชื่อ-นามสกุล'); return; }
     if (!id)   { showToast('⚠️ กรุณากรอกรหัสประจำตัว'); return; }
     if (!year) { showToast('⚠️ กรุณากรอกชั้นปี'); return; }
-    if (capturedDescriptors.length < 5) { showToast('⚠️ กรุณาถ่ายรูปให้ครบ 5 มุม'); return; }
-
-    // ตรวจชื่อซ้ำ
-    const dupName = DataStore.findStudentByName(name);
-    if (dupName && dupName.id !== id) {
-        if (!confirm(`⚠️ ชื่อ "${name}" มีในระบบแล้ว (รหัส ${dupName.id}) ยืนยันเพิ่มอีกคนใช่มั้ย?`)) return;
+    if (capturedDescriptors.length < REG_TARGET_SAMPLES) {
+        showToast(`⚠️ กรุณาเก็บอย่างน้อย ${REG_TARGET_SAMPLES} ตัวอย่างใบหน้า`);
+        return;
     }
 
-    // ตรวจรหัสซ้ำ
-    const dupId = DataStore.findStudentById(id);
+    const dupId   = DataStore.findStudentById(id);
     if (dupId) { showToast(`❌ รหัส "${id}" มีในระบบแล้ว (${dupId.name})`); return; }
 
-    // ตรวจใบหน้าซ้ำ (optional — check if face descriptor is too similar to existing)
-    if (registeredFaces.length > 0 && capturedDescriptors.length > 0) {
-        const newDesc = new Float32Array(capturedDescriptors[0]);
+    const dupName = DataStore.findStudentByName(name);
+    if (dupName && dupName.id !== id) {
+        if (!confirm(`⚠️ ชื่อ "${name}" มีในระบบแล้ว (รหัส ${dupName.id}) ยืนยันเพิ่มอีกคนหรือไม่?`)) return;
+    }
+
+    // สร้างเทมเพลตจากชุดข้อมูล 200 ตัวอย่าง (ใช้เท่านั้นสำหรับตรวจใบหน้าซ้ำ)
+    pendingTemplates = selectTemplates(capturedDescriptors, CONFIG.FACE_TEMPLATE_COUNT);
+
+    // ตรวจใบหน้าซ้ำ: เทมเพลตใหม่กับใบหน้าทั้งหมดที่มีอยู่แล้ว
+    const dupThresh = CONFIG.FACE_MATCH_THRESHOLD * 0.8;
+    let dupFace = null;
+    if (registeredFaces.length > 0 && pendingTemplates.length > 0) {
+        outer:
         for (const student of DataStore.getStudents()) {
             if (!student.descriptors || student.descriptors.length === 0) continue;
-            for (const desc of student.descriptors) {
-                const dist = faceapi.euclideanDistance(newDesc, new Float32Array(desc));
-                if (dist < CONFIG.FACE_MATCH_THRESHOLD * 0.8) {
-                    if (!confirm(`⚠️ ใบหน้านี้อาจใกล้เคียงกับ "${student.name}" (รหัส ${student.id}) ในระบบแล้ว ยืนยันเพิ่มใช่หรือไม่?`)) return;
-                    break;
+            if (student.id === id) continue;
+            for (const t of pendingTemplates) {
+                const nt = new Float32Array(t);
+                for (const exd of student.descriptors) {
+                    try {
+                        if (faceapi.euclideanDistance(nt, new Float32Array(exd)) < dupThresh) {
+                            dupFace = student; break outer;
+                        }
+                    } catch (e) { /* skip malformed */ }
                 }
             }
         }
     }
+    if (dupFace) {
+        if (!confirm(`⚠️ ใบหน้านี้อาจใกล้เคียงกับ "${dupFace.name}" (รหัส ${dupFace.id}) แล้ว ในระบบ ยืนยันเพิ่มใช่หรือไม่?`)) return;
+    }
 
-    // แสดง confirm (use escapeHtml for display only)
-    const info = document.getElementById('confirmInfo');
+    // แสดงหน้าต่อยงการยืนยัน (ใช้ escapeHtml เฉพาะการแสดง)
+    const info   = document.getElementById('confirmInfo');
     const thumbs = document.getElementById('confirmThumbs');
     if (info) info.innerHTML = `
         <div>👤 <b>ชื่อ:</b> ${escapeHtml(name)}</div>
         <div>🪪 <b>รหัส:</b> ${escapeHtml(id)}</div>
         <div>🎓 <b>ชั้นปี:</b> ${escapeHtml(year)}</div>
-        <div>📸 <b>มุมที่บันทึก:</b> ${capturedDescriptors.length} มุม</div>`;
-    if (thumbs) thumbs.innerHTML = capturedThumbURLs.map(u => `<img src="${u}" alt="thumb">`).join('');
+        <div>📸 <b>ตัวอย่างใบหน้าที่เก็บ:</b> ${capturedDescriptors.length} ตัวอย่าง</div>
+        <div>🧬 <b>เทมเพลตที่ใช้จัดการ:</b> ${pendingTemplates.length} เทมเพลต (สรุปจาก ${REG_TARGET_SAMPLES} ตัวอย่างโดยเลือกตัวแทนย่อย่อน + หลีกเลี่ยงซ้ำ)</div>`;
+    if (thumbs) thumbs.innerHTML = capturedThumbs.map(u => `<img src="${u}" alt="thumb">`).join('');
     openModal('confirmRegisterModal');
 }
 
-// บันทึกจริง
 function doSaveRegister() {
     const nameInput = document.getElementById('name');
-    const idInput = document.getElementById('studentId');
+    const idInput   = document.getElementById('studentId');
     const yearInput = document.getElementById('year');
-    
-    const name = nameInput.value.trim();
-    const id = idInput.value.trim();
-    const year = yearInput.value.trim();
-    
+
+    const name = nameInput?.value.trim();
+    const id   = idInput?.value.trim();
+    const year = yearInput?.value.trim();
+
     const btn = document.getElementById('registerBtn');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ กำลังบันทึก...'; }
 
     try {
-        const student = { name, id, year, descriptors: capturedDescriptors };
-        DataStore.addStudent(student);
+        const templates = pendingTemplates || selectTemplates(capturedDescriptors, CONFIG.FACE_TEMPLATE_COUNT);
+
+        // เก็บทั้งหมด: descriptors = เทมเพลต compact (ใช้จริงโดย recognizer อย่างไม่แต่งงาน)
+        //                samples  = ชุดข้อมูลต้นทาง 200 ตัวอย่าง (เป็นแหล่งข้อมูลสำหรับสร้างเทมเพลต)
+        const student = {
+            name,
+            id,
+            year,
+            descriptors: templates,             // Array[128] x 20 — ใช้โดย FaceMatcher (scan.js ไม่ถูกแตะ)
+            samples: capturedSamplesArr         // Array[128] x 200 — ชุดข้อมูลต้นทาง (เก็บแต่ไม่ใช้ตรงใน recognition นี้)
+        };
+        const ok = DataStore.addStudent(student);
+        if (!ok) {
+            if (btn) { btn.disabled = false; btn.textContent = '✅ ยืนยันบันทึกข้อมูล'; }
+            showToast('❌ เก็บข้อมูลใบหน้าไม่สำเร็จ (พื้นที่เต็ม) กรุณาลบนักศึกษาเก่า ๆ แล้วลองอีกครั้ง');
+            return;
+        }
         registeredFaces = DataStore.getStudents();
         updateStats();
 
         closeModal('confirmRegisterModal');
-        showToast(`✅ ลงทะเบียน "${name}" สำเร็จ! (${capturedDescriptors.length} มุม)`);
+        showToast(`✅ ลงทะเบียน "${name}" สำเร็จ! (เก็บ ${capturedDescriptors.length} ตัวอย่าง → ${templates.length} เทมเพลต)`);
         setStepperComplete();
 
-        // reset ฟอร์ม
         setTimeout(() => {
-            nameInput.value = '';
-            idInput.value = '';
-            yearInput.value = '';
+            if (nameInput) nameInput.value = '';
+            if (idInput)   idInput.value   = '';
+            if (yearInput) yearInput.value = '';
             resetCapture();
         }, 900);
     } catch (err) {
